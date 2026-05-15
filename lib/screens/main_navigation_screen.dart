@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'oldi_berdi_screen.dart';
 import 'totals_screen.dart';
+import 'analytics_screen.dart';
 
 class MainNavigationScreen extends StatefulWidget {
   static final GlobalKey<_MainNavigationScreenState> navigationKey = GlobalKey<_MainNavigationScreenState>();
@@ -27,7 +28,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   final List<Widget> _screens = [
     const OldiBerdiScreen(),
     const TotalsScreen(),
-    const Center(child: Text('Analitika sahifasi')), // Placeholder for Analytics
+    const AnalyticsScreen(),
   ];
 
   @override

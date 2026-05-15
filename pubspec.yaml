@@ -38,6 +38,7 @@ dependencies:
   provider: ^6.1.5+1
   shared_preferences: ^2.5.5
   url_launcher: ^6.3.2
+  rxdart: ^0.28.0
 
 dev_dependencies:
   flutter_test:

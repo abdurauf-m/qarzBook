@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:rxdart/rxdart.dart';
 import '../services/debt_service.dart';
 import '../models/debt_model.dart';
 import 'person_details_screen.dart';
@@ -16,7 +17,9 @@ class _TotalsScreenState extends State<TotalsScreen> with SingleTickerProviderSt
   late TabController _tabController;
   String _selectedDebtType = 'Haqqim';
   final TextEditingController _searchController = TextEditingController();
-  String _searchQuery = '';
+  
+  // RxDart Subject for search
+  final _searchSubject = BehaviorSubject<String>.seeded('');
 
   @override
   void initState() {
@@ -28,6 +31,7 @@ class _TotalsScreenState extends State<TotalsScreen> with SingleTickerProviderSt
   void dispose() {
     _tabController.dispose();
     _searchController.dispose();
+    _searchSubject.close();
     super.dispose();
   }
 
@@ -35,60 +39,69 @@ class _TotalsScreenState extends State<TotalsScreen> with SingleTickerProviderSt
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<DebtService>(
-      builder: (context, debtService, _) {
-        return Scaffold(
-          backgroundColor: const Color(0xFFF8FAFC),
-          appBar: AppBar(
-            backgroundColor: Colors.white,
-            elevation: 0,
-            title: const Text(
-              'Umumiy qarzlar',
-              style: TextStyle(
-                color: Color(0xFF1A1C1E),
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.more_vert, color: Color(0xFF1A1C1E)),
-                onPressed: () {},
-              ),
-            ],
-            bottom: TabBar(
-              controller: _tabController,
-              labelColor: const Color(0xFF3B82F6),
-              unselectedLabelColor: Colors.grey.shade600,
-              indicatorColor: const Color(0xFF3B82F6),
-              indicatorWeight: 3,
-              indicatorSize: TabBarIndicatorSize.tab,
-              labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              tabs: const [
-                Tab(text: 'To\'lanmaganlar'),
-                Tab(text: 'To\'langanlar'),
-              ],
-            ),
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFC),
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        title: const Text(
+          'Umumiy qarzlar',
+          style: TextStyle(
+            color: Color(0xFF1A1C1E),
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
           ),
-          body: TabBarView(
-            controller: _tabController,
-            children: [
-              _buildDebtList(debtService, isPaid: false),
-              _buildDebtList(debtService, isPaid: true),
-            ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.more_vert, color: Color(0xFF1A1C1E)),
+            onPressed: () {},
           ),
-        );
-      },
+        ],
+        bottom: TabBar(
+          controller: _tabController,
+          labelColor: const Color(0xFF3B82F6),
+          unselectedLabelColor: Colors.grey.shade600,
+          indicatorColor: const Color(0xFF3B82F6),
+          indicatorWeight: 3,
+          indicatorSize: TabBarIndicatorSize.tab,
+          labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          tabs: const [
+            Tab(text: 'To\'lanmaganlar'),
+            Tab(text: 'To\'langanlar'),
+          ],
+        ),
+      ),
+      body: StreamBuilder<List<Debt>>(
+        stream: Provider.of<DebtService>(context).debtStream,
+        builder: (context, debtSnapshot) {
+          return StreamBuilder<String>(
+            stream: _searchSubject.stream.debounceTime(const Duration(milliseconds: 300)),
+            builder: (context, searchSnapshot) {
+              final debts = debtSnapshot.data ?? [];
+              final searchQuery = searchSnapshot.data ?? '';
+
+              return TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildDebtList(debts, isPaid: false, searchQuery: searchQuery),
+                  _buildDebtList(debts, isPaid: true, searchQuery: searchQuery),
+                ],
+              );
+            },
+          );
+        }
+      ),
     );
   }
 
-  Widget _buildDebtList(DebtService debtService, {required bool isPaid}) {
-    // 1. Get all debts for the current payment status (Paid/Unpaid)
-    final allDebts = debtService.debts.where((d) => d.isPaid == isPaid).toList();
+  Widget _buildDebtList(List<Debt> allDebts, {required bool isPaid, required String searchQuery}) {
+    // 1. Get filtered debts
+    final statusDebts = allDebts.where((d) => d.isPaid == isPaid).toList();
 
-    // 2. Group by name and calculate net balance
+    // 2. Group by name
     final Map<String, List<Debt>> personGroups = {};
-    for (var d in allDebts) {
+    for (var d in statusDebts) {
       personGroups.update(d.name, (list) => [...list, d], ifAbsent: () => [d]);
     }
 
@@ -97,6 +110,7 @@ class _TotalsScreenState extends State<TotalsScreen> with SingleTickerProviderSt
       double netSom = 0;
       double netUsd = 0;
       int records = 0;
+      int latestTimestamp = 0;
 
       for (var d in personDebts) {
         final isHaqqim = d.type == 'Haqqim';
@@ -105,12 +119,13 @@ class _TotalsScreenState extends State<TotalsScreen> with SingleTickerProviderSt
         if (d.currency == 'UZS') netSom += amount;
         else netUsd += amount;
         records++;
+
+        final timestampStr = d.id.split('_')[0];
+        final ts = int.tryParse(timestampStr) ?? 0;
+        if (ts > latestTimestamp) latestTimestamp = ts;
       }
 
-      // Filter by search query
-      if (name.toLowerCase().contains(_searchQuery.toLowerCase())) {
-        // Determine if this person belongs to 'Haqqim' or 'Qarzim' tab based on net balance
-        // If netSom and netUsd are 0, we use the type of the first debt to decide where to show them
+      if (name.toLowerCase().contains(searchQuery.toLowerCase())) {
         bool matchesType = false;
         if (_selectedDebtType == 'Haqqim') {
           matchesType = netSom > 0 || netUsd > 0 || (netSom == 0 && netUsd == 0 && personDebts.any((d) => d.type == 'Haqqim'));
@@ -124,15 +139,17 @@ class _TotalsScreenState extends State<TotalsScreen> with SingleTickerProviderSt
             'som': netSom,
             'usd': netUsd,
             'count': records,
+            'latestTimestamp': latestTimestamp,
           });
         }
       }
     });
 
+    netBalances.sort((a, b) => b['latestTimestamp'].compareTo(a['latestTimestamp']));
+
     return Column(
       children: [
         _buildFilterSection(),
-        // List of People
         Expanded(
           child: netBalances.isEmpty 
             ? Center(child: Text(isPaid ? 'To\'langanlar ro\'yxati bo\'sh' : 'To\'lanmaganlar ro\'yxati bo\'sh'))
@@ -163,7 +180,6 @@ class _TotalsScreenState extends State<TotalsScreen> with SingleTickerProviderSt
       padding: const EdgeInsets.all(16.0),
       child: Column(
         children: [
-          // Dropdown
           Container(
             height: 52,
             decoration: BoxDecoration(
@@ -192,7 +208,6 @@ class _TotalsScreenState extends State<TotalsScreen> with SingleTickerProviderSt
             ),
           ),
           const SizedBox(height: 12),
-          // Search Field
           Container(
             height: 52,
             decoration: BoxDecoration(
@@ -202,7 +217,7 @@ class _TotalsScreenState extends State<TotalsScreen> with SingleTickerProviderSt
             ),
             child: TextField(
               controller: _searchController,
-              onChanged: (val) => setState(() => _searchQuery = val),
+              onChanged: (val) => _searchSubject.add(val),
               decoration: const InputDecoration(
                 hintText: 'Ism bo\'yicha qidiring...',
                 hintStyle: TextStyle(color: Color(0xFFA1A1A1), fontSize: 16),
